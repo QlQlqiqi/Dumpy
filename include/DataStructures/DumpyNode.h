@@ -74,6 +74,7 @@ class DumpyNode {
         for(auto &i:bits_cardinality)   i = 1;
     }
     DumpyNode(const DumpyNode* parent, int _size, int _id){
+        partition_id = parent->id;
         layer = parent->layer + 1;
         id = _id;
         size = _size;
@@ -98,6 +99,7 @@ class DumpyNode {
     void generateSaxAndCardIn1stLayer4LeafNode(int new_id);
     void generateSaxAndCardinality4LeafNode(DumpyNode *node, int new_id);
     static int partition1stLayer(partUnit *nodes_map, vector<vector<int>> *g,double filling_factor);
+    static int partitionNew(vector<partUnit>& nodes_map, int chosen_segment_number);
     static int partition(partUnit *nodes_map);
     void growIndex();
     void growIndexFuzzy(unordered_map<DumpyNode *, NODE_RECORDER> &navigating_tbl, vector<vector<int>> *g);
@@ -148,9 +150,11 @@ public:
     vector<int> offsets{};
 
     DumpyNode *route(const unsigned short *_sax);
+    void setPartition(DumpyNode *childrenList[], const vector<partUnit>&nodeIn1stLayer);
     static DumpyNode *BuildIndex(string &datafn, string &saxfn);
 
     [[nodiscard]] string getFileName() const{
+        std::cout << partition_id << std::endl;
         if(layer == 1)  return "1_" + to_string(partition_id);
         return to_string(layer) + "-" + file_id;
     }

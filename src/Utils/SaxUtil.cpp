@@ -669,48 +669,61 @@ void SaxUtil::printBinary(long n, int size) {
     cout<<b;
 }
 
-void SaxUtil::generateSaxFile(const string &fn , const string &output){
-    long fs = FileUtil::getFileSize(fn.c_str());
-    int num = fs / Const::tsLengthBytes;
-    cout << "Total Number is "<< num <<endl;
-    float ts[Const::tsLength];
-    unsigned short sax[Const::segmentNum];
-    FILE *f = fopen(fn.c_str(), "rb");
-    FILE *of = fopen(output.c_str(), "wb");
-    for(int i=0;i<num;++i){
-        if(i % 1000000 == 0)    cout << i << endl;
-        if(i == 74625529)
-            cout <<"hereh"<<endl;
-        fread(ts, sizeof(float ), Const::tsLength, f);
-        if(isnan(ts[0])){
-            for(auto &t:sax)    t = 0;
-            cout << i << "," <<endl;
-        }
-        else    saxFromTs(ts, sax, Const::tsLengthPerSegment, Const::segmentNum, Const::cardinality);
-        fwrite(sax, sizeof(unsigned short), Const::segmentNum, of);
-    }
-    fclose(f);
-    fclose(of);
+void SaxUtil::generateSaxFile(const string &fn, const string &output) {
+  long fs = FileUtil::getFileSize(fn.c_str());
+  int num = fs / Const::tsLengthBytes;
+  if (FileUtil::CheckFile(output, Const::segmentNum * sizeof(unsigned short) * num)) {
+    return;
+  }
+
+  printf("--------- Start to generate sax file: %s ---------\n", output.c_str());
+  cout << "Total Number is " << num << endl;
+  float ts[Const::tsLength];
+  unsigned short sax[Const::segmentNum];
+  FILE *f = fopen(fn.c_str(), "rb");
+  FILE *of = fopen(output.c_str(), "wb");
+  for (int i = 0; i < num; ++i) {
+    // if(i % 1000000 == 0)    cout << i << endl;
+    fread(ts, sizeof(float), Const::tsLength, f);
+    if (isnan(ts[0])) {
+      printf("ts is nan\n");
+      exit(-1);
+      // for(auto &t:sax)    t = 0;
+      // cout << i << "," <<endl;
+    } else
+      saxFromTs(ts, sax, Const::tsLengthPerSegment, Const::segmentNum,
+                Const::cardinality);
+    fwrite(sax, sizeof(unsigned short), Const::segmentNum, of);
+  }
+  fclose(f);
+  fclose(of);
 }
 
 void SaxUtil::generatePaaFile(const string &fn, const string &output) {
     long fs = FileUtil::getFileSize(fn.c_str());
     int num = fs / Const::tsLengthBytes;
+    if (FileUtil::CheckFile(output, Const::segmentNum * sizeof(float) * num)) {
+      return;
+    }
+
+    printf("--------- Start to generate paa file: %s ---------\n", output.c_str());
     cout << "Total number is " << num << endl;
     float ts[Const::tsLength];
     float paa[Const::segmentNum];
     FILE *f = fopen(fn.c_str(), "rb");
     FILE *of = fopen(output.c_str(), "wb");
+    float paa_max[Const::segmentNum];
+    fill_n(paa_max, Const::segmentNum, 0);
     for(int i=0;i<num;++i){
-        if(i % 1000000 == 0)    cout << i << endl;
-        if(i == 74625529)
-            cout << i << endl;
+        // if(i % 1000000 == 0)    cout << i << endl;
         fread(ts, sizeof(float ), Const::tsLength, f);
         if(isnan(ts[0])){
             for(auto &t:paa)    t = 0;
-            cout << i << "," <<endl;
+            // cout << i << "," <<endl;
         }
         else    paaFromTs(ts, paa, Const::tsLengthPerSegment, Const::segmentNum);
+        for(int j=0;j<Const::segmentNum;++j)
+            paa_max[j] = max(paa_max[j], paa[j]);
         fwrite(paa, sizeof(float ), Const::segmentNum, of);
     }
     fclose(f);

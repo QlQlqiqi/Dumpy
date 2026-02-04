@@ -408,6 +408,29 @@ void DumpyNode::searchDTWSIMD(int k, TimeSeries *queryTs, vector<PqItemSeries *>
     fclose(f);
 }
 
+void DumpyNode::setPartition(DumpyNode *childrenList[],
+                             const vector<partUnit>&nodeIn1stLayer) {
+  for (int i = 0; i < children.size(); ++i) {
+    if (!children[i]) {
+      continue;
+    }
+    children[i]->setPartition(childrenList, nodeIn1stLayer);
+    assert(children[i]->layer != 0);
+    if (children[i]->layer == 1) {
+      assert(children[i]->partition_id != -1);
+    }
+    if (children[i]->partition_id == -1) {
+      children[i]->partition_id = id;
+      //   children[i]->partition_id =
+      //       childrenList[nodeIn1stLayer[i].pid]->partition_id;
+      //   if (children[i]->partition_id < 0) {
+      //     // exit(-1);
+      //     assert(false);
+      //   }
+    }
+  }
+}
+
 
 DumpyNode *DumpyNode::BuildIndex(string &datafn, string &saxfn) {
     Const::logPrint("Start building index.");
@@ -418,10 +441,11 @@ DumpyNode *DumpyNode::BuildIndex(string &datafn, string &saxfn) {
     auto* root = new DumpyNode();
     root->size = series_num;
     for(int &i:root->bits_cardinality)  i=0;
+    // vector<partUnit> nodeIn1stLayer(Const::vertexNum);
     partUnit nodeIn1stLayer[Const::vertexNum];
     int *navids = new int[series_num];
-    for(int i=0;i<Const::vertexNum;++i)
-        nodeIn1stLayer[i].id = i, nodeIn1stLayer[i].size=0, nodeIn1stLayer[i].pid = -1;
+    for(int i=0;i<Const::vertexNum;++i){
+        nodeIn1stLayer[i].id = i, nodeIn1stLayer[i].size=0, nodeIn1stLayer[i].pid = -1;}
 
     // get 1st layer node size
     for(long i=0;i<series_num;++i){
@@ -435,6 +459,7 @@ DumpyNode *DumpyNode::BuildIndex(string &datafn, string &saxfn) {
 
     // partition 1st layer
     int partNum = partition(nodeIn1stLayer, Const::segmentNum);
+    // int partNum = partitionNew(nodeIn1stLayer, Const::segmentNum);
     Const::logPrint("Finish partition");
     DumpyNode* childrenList[partNum];
     for(int i=0;i<partNum;++i)  childrenList[i] = new DumpyNode(1, i);
@@ -457,6 +482,8 @@ DumpyNode *DumpyNode::BuildIndex(string &datafn, string &saxfn) {
         }
     }
     Const::logPrint("Finish build index structure 1st layer.");
+
+    // root->setPartition(childrenList, nodeIn1stLayer);
     
     // put data offsets to internal nodes in 1st layer
     for(int i=0;i<Const::vertexNum;++i)
@@ -478,6 +505,8 @@ DumpyNode *DumpyNode::BuildIndex(string &datafn, string &saxfn) {
         if(++j%milestone == 0)
             Const::logPrint(to_string(j) + " nodes in the 1st layer has been processed.");
     }
+    
+    // root->setPartition(childrenList, nodeIn1stLayer);
 
     Const::logPrint("build index skeleton finished.");
 
@@ -521,7 +550,7 @@ void DumpyNode::growIndex() {
             children[i]->offsets.resize(nodes[i].size);
             copy(node_offsets[i].begin(),  node_offsets[i].end(), children[i]->offsets.begin());
             vector<int>().swap(node_offsets[i]);
-        }else if(partition_id == -1){
+        }else if(nodes[i].pid == -1){
             children[i] = new DumpyNode(this, nodes[i].size, i);
             generateSaxAndCardinality(children[i], i);
             vector<int>().swap(node_offsets[i]);
@@ -883,6 +912,97 @@ struct failUnit{
 
 static bool comp_fail_node(failUnit *x, failUnit *y){
     return x->neighbor_size > y->neighbor_size;
+}
+
+int DumpyNode::partitionNew(vector<partUnit>& nodes_map, int chosen_segment_number){
+    vector<partUnit*>nodes;
+    int input_node_number = 1 << chosen_segment_number;
+    int total_size = 0, node_number;
+    for(int i=0;i<input_node_number;++i){
+        if(nodes_map[i].size < Const::th * Const::small_perc && nodes_map[i].size > 0) {
+            nodes.push_back(&nodes_map[i]);
+            total_size += nodes_map[i].size;
+        }
+    }
+
+    node_number = nodes.size();
+    if(node_number <= 3) return 0;
+//    cout << "node number = " << node_number <<", total size = " << total_size << endl;
+//    sort(nodes.begin(),  nodes.end(), partUnit::comp_size);
+    int pid = 0;
+    int first_round_pack_num = (int)floor(total_size / (Const::th));
+    if(node_number <= first_round_pack_num) return 0;
+    int max_mask_num = floor(chosen_segment_number * Const::max_mask_bit_percentage);
+    // 0.5 is a small number, generate more packs in the first round
+    vector<pack>packs(first_round_pack_num);
+    sort(nodes.begin(), nodes.end(), partUnit::comp_size);
+    for(int i=0;i<first_round_pack_num;++i){
+        packs[i] = pack(nodes[i], chosen_segment_number, i);
+    }
+
+    for(partUnit* cur_node:nodes) {
+        if (cur_node->pid != -1) continue;   // the node has been packed
+        int cur_id = cur_node->id;
+
+        int min_cost = chosen_segment_number;
+        int pack_id = -1;
+        for (pack &p: packs) {
+            if (p.total_size + cur_node->size > Const::th || p.masked_bits_num >= max_mask_num) continue;
+            int cost = p.calc_cost(cur_id, chosen_segment_number);
+            if(cost + p.masked_bits_num >= max_mask_num)    continue;
+            if (cost < min_cost) {
+                min_cost = cost;
+                pack_id = p.pid;
+            }
+        }
+        if (pack_id == -1) {
+            packs.emplace_back(cur_node, chosen_segment_number, packs.size());
+        }else {
+            packs[pack_id].insert(cur_node, chosen_segment_number);
+        }
+    }
+
+    // merge packs
+    unordered_map<int,int>pid_map;
+    for(int i = 0;i<packs.size();++i)
+        pid_map[i] = i;
+    sort(packs.begin(),packs.end(), pack::comp_size);
+    for(int i=0;i<packs.size();++i){
+        pack& cur_pack = packs[i];
+        if(cur_pack.pid != pid_map[cur_pack.pid])    continue;
+
+        int min_cost = chosen_segment_number;
+        int min_size = numeric_limits<int>::max();
+        int min_pack_id = -1;
+        int cur_cost, tar_cost;
+        for(int j=0;j<packs.size();++j){
+            pack&target_pack = packs[j];
+            if(target_pack.disabled || cur_pack.pid == target_pack.pid || cur_pack.total_size + target_pack.total_size > Const::th
+            || cur_pack.masked_bits_num >= max_mask_num || target_pack.masked_bits_num >= max_mask_num) continue;
+            cur_pack.calc_pack_merge_cost(target_pack, chosen_segment_number, &cur_cost, &tar_cost);
+            if(cur_cost + cur_pack.masked_bits_num >= max_mask_num ||
+               tar_cost + target_pack.masked_bits_num >= max_mask_num) continue;
+            int cost = cur_cost + tar_cost;
+            if(cost < min_cost || (cost == min_cost && cur_pack.total_size < min_size)){
+                min_cost = cost;
+                min_size = target_pack.total_size;
+                min_pack_id = j;
+            }
+        }
+
+        if(min_size < numeric_limits<int>::max()){
+            cur_pack.merge_pack(&packs[min_pack_id], chosen_segment_number);
+        }
+    }
+
+    // re-assign the pids to the nodes
+    int max_pid = 0;
+    for(partUnit* node:nodes) {
+        node->pid = pid_map[node->pid];
+        max_pid = max(max_pid, node->pid);
+    }
+
+    return max_pid + 1;
 }
 
 int DumpyNode::partition(partUnit* nodes_map, int chosen_segment_number){

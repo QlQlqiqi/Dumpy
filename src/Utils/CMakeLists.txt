@@ -1,0 +1,10 @@
+add_library(
+  src_utils_lib
+  OBJECT
+  FileUtil.cpp
+  INIReader.cpp
+  MathUtil.cpp
+  SaxUtil.cpp
+  TimeSeriesUtil.cpp
+  ini.c
+)
